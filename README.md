@@ -1,4 +1,8 @@
----
+## 📸 Screenshot
+
+![XSS-Sentinel in action](Screenshots/Demo_screenshot.png)
+
+------
 
 ## ⚖️ Legal Disclaimer
 
