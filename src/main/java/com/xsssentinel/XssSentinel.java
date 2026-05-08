@@ -8,8 +8,13 @@ import burp.api.montoya.http.handler.HttpResponseReceived;
 import burp.api.montoya.http.handler.RequestToBeSentAction;
 import burp.api.montoya.http.handler.ResponseReceivedAction;
 import burp.api.montoya.http.message.HttpRequestResponse;
+import com.xsssentinel.core.ContextMenu;
 import com.xsssentinel.core.SentinelScanner;
+import com.xsssentinel.payloads.PayloadManager;
+import com.xsssentinel.ui.PayloadManagerPanel;
 import com.xsssentinel.ui.SentinelPanel;
+
+import javax.swing.*;
 
 public class XssSentinel implements BurpExtension {
 
@@ -29,16 +34,21 @@ public class XssSentinel implements BurpExtension {
         api.logging().logToOutput(" Intelligent XSS Scanner for Burp Suite");
         api.logging().logToOutput("==============================================");
 
-        // Initialize UI
-        panel = new SentinelPanel();
+        // Initialize shared PayloadManager
+        PayloadManager payloadManager = new PayloadManager();
 
-        // Pass API to panel for Repeater support
+        // Initialize UI panels
+        panel = new SentinelPanel();
         panel.setApi(api);
 
-        // Initialize scanner
-        scanner = new SentinelScanner(api, panel);
+        // Initialize Payload Manager Panel
+        PayloadManagerPanel payloadManagerPanel =
+                new PayloadManagerPanel(payloadManager);
 
-        // Connect buttons to scanner
+        // Initialize scanner with shared PayloadManager
+        scanner = new SentinelScanner(api, panel, payloadManager);
+
+        // Connect scan buttons to scanner
         panel.setCrawlCallback((targetUrl, creds) -> {
             api.logging().logToOutput("Scan triggered: " + targetUrl);
             api.logging().logToOutput("Auth: "
@@ -46,9 +56,29 @@ public class XssSentinel implements BurpExtension {
             scanner.crawlAndScan(targetUrl, creds);
         });
 
-        // Register UI tab
+        // Connect pause/resume
+        panel.setPauseCallback(() -> panel.setPaused(true));
+        panel.setResumeCallback(() -> panel.setPaused(false));
+
+        // Create tabbed panel
+        JTabbedPane tabbedPane = new JTabbedPane();
+        tabbedPane.setFont(new java.awt.Font("SansSerif",
+                java.awt.Font.PLAIN, 12));
+
+        // Tab 1 - Scanner
+        tabbedPane.addTab("Scanner", panel.getPanel());
+
+        // Tab 2 - Payload Manager
+        tabbedPane.addTab("Payload Manager",
+                payloadManagerPanel.getPanel());
+
+        // Register combined UI tab
         api.userInterface().registerSuiteTab(
-                EXTENSION_NAME, panel.getPanel());
+                EXTENSION_NAME, tabbedPane);
+
+        // Register right-click context menu
+        api.userInterface().registerContextMenuItemsProvider(
+                new ContextMenu(api, scanner, panel));
 
         // Passive proxy monitoring
         api.http().registerHttpHandler(new HttpHandler() {
@@ -77,6 +107,6 @@ public class XssSentinel implements BurpExtension {
                 api.logging().logToOutput("XSS-Sentinel unloaded"));
 
         panel.setStatus(
-                "Ready — Enter URL, choose Quick Scan or Auth Scan");
+                "Ready - Enter URL and choose Quick Scan or Auth Scan");
     }
 }

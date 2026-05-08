@@ -34,8 +34,11 @@ public class SentinelPanel {
     private int totalVulnerable = 0;
     private BiConsumer<String, LoginCredentials> crawlCallback;
     private MontoyaApi api;
+    private volatile boolean paused = false;
+    private Runnable pauseCallback;
+    private Runnable resumeCallback;
+    private JButton pauseButton;
 
-    // Store full result data separately
     private final List<XssFuzzer.FuzzResult> resultData = new ArrayList<>();
 
     public static class LoginCredentials {
@@ -65,6 +68,22 @@ public class SentinelPanel {
         this.api = api;
     }
 
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public void setPaused(boolean paused) {
+        this.paused = paused;
+    }
+
+    public void setPauseCallback(Runnable callback) {
+        this.pauseCallback = callback;
+    }
+
+    public void setResumeCallback(Runnable callback) {
+        this.resumeCallback = callback;
+    }
+
     public SentinelPanel() {
         mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBackground(Color.WHITE);
@@ -75,7 +94,7 @@ public class SentinelPanel {
         headerPanel.setBorder(BorderFactory.createEmptyBorder(10, 15, 10, 15));
 
         JLabel titleLabel = new JLabel(
-                "XSS-Sentinel — Intelligent XSS Scanner");
+                "XSS-Sentinel - Intelligent XSS Scanner");
         titleLabel.setForeground(Color.WHITE);
         titleLabel.setFont(new Font("SansSerif", Font.BOLD, 16));
 
@@ -97,6 +116,7 @@ public class SentinelPanel {
         urlField = new JTextField("http://");
         styleTextField(urlField);
 
+        // ── Buttons ──────────────────────────────────────────
         JPanel buttonRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttonRow.setBackground(new Color(50, 50, 50));
 
@@ -106,9 +126,9 @@ public class SentinelPanel {
         quickScanButton.setForeground(Color.WHITE);
         quickScanButton.setOpaque(true);
         quickScanButton.setBorderPainted(false);
-        quickScanButton.setPreferredSize(new Dimension(120, 28));
+        quickScanButton.setPreferredSize(new Dimension(110, 28));
         quickScanButton.setToolTipText(
-                "Scan without login — for public/test apps");
+                "Scan without login — for public apps");
 
         JButton authScanButton = new JButton("Auth Scan");
         authScanButton.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -116,11 +136,21 @@ public class SentinelPanel {
         authScanButton.setForeground(Color.WHITE);
         authScanButton.setOpaque(true);
         authScanButton.setBorderPainted(false);
-        authScanButton.setPreferredSize(new Dimension(120, 28));
+        authScanButton.setPreferredSize(new Dimension(110, 28));
         authScanButton.setToolTipText("Scan with login credentials");
+
+        pauseButton = new JButton("Pause");
+        pauseButton.setFont(new Font("SansSerif", Font.BOLD, 12));
+        pauseButton.setBackground(new Color(150, 100, 0));
+        pauseButton.setForeground(Color.WHITE);
+        pauseButton.setOpaque(true);
+        pauseButton.setBorderPainted(false);
+        pauseButton.setPreferredSize(new Dimension(80, 28));
+        pauseButton.setToolTipText("Pause or Resume the scan");
 
         buttonRow.add(quickScanButton);
         buttonRow.add(authScanButton);
+        buttonRow.add(pauseButton);
 
         urlRow.add(urlLabel, BorderLayout.WEST);
         urlRow.add(urlField, BorderLayout.CENTER);
@@ -177,6 +207,9 @@ public class SentinelPanel {
             String url = urlField.getText().trim();
             if (!validateUrl(url)) return;
             authPanel.setVisible(false);
+            paused = false;
+            pauseButton.setText("Pause");
+            pauseButton.setBackground(new Color(150, 100, 0));
             mainPanel.revalidate();
             resultData.clear();
             if (crawlCallback != null) {
@@ -204,12 +237,30 @@ public class SentinelPanel {
             if (!creds.hasCredentials()) {
                 JOptionPane.showMessageDialog(mainPanel,
                         "Please enter username and password!",
-                        "Missing Credentials", JOptionPane.WARNING_MESSAGE);
+                        "Missing Credentials",
+                        JOptionPane.WARNING_MESSAGE);
                 return;
             }
+            paused = false;
+            pauseButton.setText("Pause");
+            pauseButton.setBackground(new Color(150, 100, 0));
             resultData.clear();
             if (crawlCallback != null) {
                 crawlCallback.accept(url, creds);
+            }
+        });
+
+        pauseButton.addActionListener(e -> {
+            if (pauseButton.getText().equals("Pause")) {
+                paused = true;
+                pauseButton.setText("Resume");
+                pauseButton.setBackground(new Color(0, 120, 0));
+                setStatus("Scan paused - click Resume to continue");
+            } else {
+                paused = false;
+                pauseButton.setText("Pause");
+                pauseButton.setBackground(new Color(150, 100, 0));
+                setStatus("Scan resumed...");
             }
         });
 
@@ -220,7 +271,6 @@ public class SentinelPanel {
         topPanel.add(authPanel, BorderLayout.SOUTH);
 
         // ── Results Table ────────────────────────────────────
-        // Columns: #, Location, URL, Parameter, XSS Type, Severity, Actions
         String[] columns = {
                 "#", "Location", "URL", "Parameter",
                 "XSS Type", "Severity", "Actions"
@@ -248,7 +298,7 @@ public class SentinelPanel {
         resultsTable.getColumnModel().getColumn(3).setPreferredWidth(90);
         resultsTable.getColumnModel().getColumn(4).setPreferredWidth(120);
         resultsTable.getColumnModel().getColumn(5).setPreferredWidth(70);
-        resultsTable.getColumnModel().getColumn(6).setPreferredWidth(270);
+        resultsTable.getColumnModel().getColumn(6).setPreferredWidth(280);
 
         // XSS Type column renderer
         resultsTable.getColumnModel().getColumn(4)
@@ -274,11 +324,10 @@ public class SentinelPanel {
                             label.setForeground(Color.WHITE);
                             break;
                         default:
-                            label.setBackground(new Color(80, 80, 80));
+                            label.setBackground(new Color(220, 80, 0));
                             label.setForeground(Color.WHITE);
                             break;
                     }
-                    if (isSelected) label.setOpaque(true);
                     return label;
                 });
 
@@ -317,7 +366,7 @@ public class SentinelPanel {
         resultsTable.getColumnModel().getColumn(6)
                 .setCellRenderer(new ActionButtonRenderer());
 
-        // Actions column click handler
+        // Click handler
         resultsTable.addMouseListener(new MouseAdapter() {
             public void mouseClicked(MouseEvent e) {
                 int row = resultsTable.rowAtPoint(e.getPoint());
@@ -328,9 +377,8 @@ public class SentinelPanel {
                 if (modelRow >= resultData.size()) return;
 
                 XssFuzzer.FuzzResult result = resultData.get(modelRow);
-
-                // Calculate which button was clicked
-                Rectangle cellRect = resultsTable.getCellRect(row, col, false);
+                Rectangle cellRect = resultsTable.getCellRect(
+                        row, col, false);
                 int xInCell = e.getX() - cellRect.x;
 
                 if (xInCell >= 5 && xInCell < 120) {
@@ -357,7 +405,7 @@ public class SentinelPanel {
                 BorderFactory.createEmptyBorder(5, 15, 5, 15));
 
         statusLabel = new JLabel(
-                "Ready — Enter URL, choose Quick Scan or Auth Scan");
+                "Ready - Enter URL and choose Quick Scan or Auth Scan");
         statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
         statusLabel.setForeground(new Color(100, 100, 100));
 
@@ -426,13 +474,17 @@ public class SentinelPanel {
             api.repeater().sendToRepeater(request,
                     "XSS: " + result.getParameter()
                             + " [" + result.getSeverity() + "]");
-            setStatus("Sent to Repeater — check Repeater tab!");
+            setStatus("Sent to Repeater - check Repeater tab!");
             JOptionPane.showMessageDialog(mainPanel,
                     "<html><b>Sent to Burp Repeater!</b><br><br>"
                             + "Go to the <b>Repeater</b> tab<br>"
-                            + "and click <b>Send</b> to verify the XSS.<br><br>"
-                            + "<font color='gray'>Parameter: "
-                            + result.getParameter() + "</font></html>",
+                            + "and click <b>Send</b> to verify.<br><br>"
+                            + "<b>Parameter:</b> "
+                            + result.getParameter() + "<br>"
+                            + "<b>Location:</b> "
+                            + result.getLocation() + "<br>"
+                            + "<b>Severity:</b> "
+                            + result.getSeverity() + "</html>",
                     "Sent to Repeater",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception e) {
@@ -448,25 +500,44 @@ public class SentinelPanel {
                 result.getParameter(),
                 result.getPayload());
         copyToClipboard(verifyUrl);
+
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+
+        JLabel header = new JLabel(
+                "<html><b style='font-size:13px'>"
+                        + "XSS Vulnerability Details</b></html>");
+
+        JTextArea details = new JTextArea();
+        details.setEditable(false);
+        details.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        details.setBackground(new Color(245, 245, 245));
+        details.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        details.setText(
+                "Location  : " + result.getLocation() + "\n"
+                        + "URL       : " + result.getUrl() + "\n"
+                        + "Parameter : " + result.getParameter() + "\n"
+                        + "XSS Type  : " + result.getType() + "\n"
+                        + "Severity  : " + result.getSeverity() + "\n"
+                        + "Payload   : " + result.getPayload() + "\n\n"
+                        + "Verify URL (copied to clipboard):\n"
+                        + verifyUrl + "\n\n"
+                        + "HOW TO VERIFY:\n"
+                        + "1. Paste the URL in your browser\n"
+                        + "2. Look for alert popup: 'XSS-Sentinel'\n"
+                        + "3. Alert appears = Confirmed vulnerability!\n"
+                        + "4. Or use 'Send to Repeater' to verify in Burp"
+        );
+
+        JScrollPane scroll = new JScrollPane(details);
+        scroll.setPreferredSize(new Dimension(550, 280));
+
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(scroll, BorderLayout.CENTER);
+
         JOptionPane.showMessageDialog(mainPanel,
-                "<html>"
-                        + "<b style='font-size:13px'>XSS Vulnerability Found!</b>"
-                        + "<br><br>"
-                        + "<b>Location:</b> " + result.getLocation() + "<br>"
-                        + "<b>URL:</b> " + result.getUrl() + "<br>"
-                        + "<b>Parameter:</b> " + result.getParameter() + "<br>"
-                        + "<b>XSS Type:</b> " + result.getType() + "<br>"
-                        + "<b>Severity:</b> " + result.getSeverity() + "<br><br>"
-                        + "<b>Verify URL (copied!):</b><br>"
-                        + "<font color='blue'>" + verifyUrl + "</font><br><br>"
-                        + "<b>Steps to verify:</b><br>"
-                        + "1. Paste URL in browser<br>"
-                        + "2. Look for alert popup: 'XSS-Sentinel'<br>"
-                        + "3. Alert appears = Confirmed vulnerability!<br><br>"
-                        + "<font color='gray'>Tip: Use 'Send to Repeater' "
-                        + "to verify inside Burp</font>"
-                        + "</html>",
-                "Verify XSS Finding",
+                panel,
+                "XSS Finding Details",
                 JOptionPane.INFORMATION_MESSAGE);
     }
 
@@ -480,12 +551,12 @@ public class SentinelPanel {
         textArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         JScrollPane scroll = new JScrollPane(textArea);
-        scroll.setPreferredSize(new Dimension(580, 380));
+        scroll.setPreferredSize(new Dimension(580, 400));
 
         JPanel panel = new JPanel(new BorderLayout(0, 10));
         JLabel header = new JLabel(
                 "<html><b>Remediation Guide</b>"
-                        + " — Parameter: <font color='red'>"
+                        + " - Parameter: <font color='red'>"
                         + result.getParameter()
                         + "</font> | Type: <font color='orange'>"
                         + result.getType()
@@ -553,9 +624,7 @@ public class SentinelPanel {
         SwingUtilities.invokeLater(() -> {
             totalVulnerable++;
             resultData.add(result);
-
             String xssType = formatXssType(result.getType());
-
             tableModel.addRow(new Object[]{
                     totalVulnerable,
                     result.getLocation(),
@@ -620,8 +689,11 @@ public class SentinelPanel {
         resultData.clear();
         totalScanned = 0;
         totalVulnerable = 0;
+        paused = false;
+        pauseButton.setText("Pause");
+        pauseButton.setBackground(new Color(150, 100, 0));
         updateStats();
-        statusLabel.setText("Results cleared — Ready");
+        statusLabel.setText("Results cleared - Ready");
     }
 
     private String shortenUrl(String url) {

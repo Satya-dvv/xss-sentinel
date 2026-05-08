@@ -1,9 +1,11 @@
 package com.xsssentinel.core;
 
+import com.xsssentinel.payloads.PayloadManager;
 import com.xsssentinel.crawler.AppCrawler;
 import com.xsssentinel.fuzzer.XssFuzzer;
 import com.xsssentinel.ui.SentinelPanel;
 import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 
@@ -29,11 +31,12 @@ public class SentinelScanner {
     private static final int MAX_PAGES = 20;
     private static final int TIMEOUT = 10000;
 
-    public SentinelScanner(MontoyaApi api, SentinelPanel panel) {
+    public SentinelScanner(MontoyaApi api, SentinelPanel panel,
+                           PayloadManager payloadManager) {
         this.api = api;
         this.panel = panel;
         this.crawler = new AppCrawler();
-        this.fuzzer = new XssFuzzer();
+        this.fuzzer = new XssFuzzer(payloadManager);
     }
 
     public void processProxyRequest(HttpRequestResponse requestResponse) {
@@ -74,8 +77,7 @@ public class SentinelScanner {
                         scanning = false;
                         return;
                     }
-                    api.logging().logToOutput("Login successful — cookie: "
-                            + sessionCookie);
+                    api.logging().logToOutput("Login successful");
                     panel.setStatus("Login successful — starting crawl...");
                 }
 
@@ -136,6 +138,17 @@ public class SentinelScanner {
                 String cookie = sessionCookie;
 
                 for (AppCrawler.CrawledInput input : inputs) {
+
+                    // Check if paused
+                    while (panel.isPaused()) {
+                        try {
+                            Thread.sleep(500);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+
                     count++;
                     panel.setStatus("Testing " + count + "/"
                             + inputs.size() + " — "
@@ -154,7 +167,7 @@ public class SentinelScanner {
                     }
                 }
 
-                panel.setStatus("Scan complete — "
+                panel.setStatus("Scan complete - "
                         + inputs.size() + " inputs tested");
 
             } catch (Exception e) {
@@ -178,17 +191,13 @@ public class SentinelScanner {
                     "application/x-www-form-urlencoded");
             conn.setRequestProperty("User-Agent",
                     "Mozilla/5.0 (XSS-Sentinel Scanner)");
-
             String body = creds.usernameParam + "="
                     + creds.username + "&"
                     + creds.passwordParam + "="
                     + creds.password;
-
             conn.getOutputStream().write(body.getBytes());
-
             String cookie = conn.getHeaderField("Set-Cookie");
             return cookie != null ? cookie : "";
-
         } catch (Exception e) {
             api.logging().logToError("Login error: " + e.getMessage());
             return "";
@@ -209,9 +218,7 @@ public class SentinelScanner {
             if (cookie != null && !cookie.isEmpty()) {
                 conn.setRequestProperty("Cookie", cookie);
             }
-
             if (conn.getResponseCode() != 200) return "";
-
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(conn.getInputStream()));
             StringBuilder sb = new StringBuilder();
@@ -221,7 +228,6 @@ public class SentinelScanner {
             }
             reader.close();
             return sb.toString();
-
         } catch (Exception e) {
             api.logging().logToError("Fetch error: " + e.getMessage());
             return "";
@@ -250,7 +256,8 @@ public class SentinelScanner {
 
             Matcher actionMatcher = actionPattern.matcher(
                     formMatcher.group(0));
-            if (actionMatcher.find() && !actionMatcher.group(1).isEmpty()) {
+            if (actionMatcher.find()
+                    && !actionMatcher.group(1).isEmpty()) {
                 action = resolveUrl(pageUrl, actionMatcher.group(1));
             }
 
@@ -326,60 +333,109 @@ public class SentinelScanner {
                                String payload, String method,
                                String cookie) {
         try {
-            HttpRequest request;
-            if (method.equalsIgnoreCase("GET")) {
-                String injectedUrl = injectIntoUrl(url, parameter, payload);
-                api.logging().logToOutput("Testing: " + injectedUrl);
-                request = HttpRequest.httpRequestFromUrl(injectedUrl);
-            } else {
-                request = HttpRequest.httpRequestFromUrl(url)
-                        .withMethod("POST")
-                        .withBody(parameter + "=" + payload);
+            // Parse URL components
+            URL parsedUrl = new URL(url);
+            String host = parsedUrl.getHost();
+            int port = parsedUrl.getPort();
+            boolean isHttps = parsedUrl.getProtocol()
+                    .equalsIgnoreCase("https");
+
+            if (port == -1) {
+                port = isHttps ? 443 : 80;
             }
+
+            // Build raw path with injected payload
+            String path = parsedUrl.getPath();
+            if (path == null || path.isEmpty()) path = "/";
+
+            // Build query string with raw payload
+            String existingQuery = parsedUrl.getQuery();
+            StringBuilder newQuery = new StringBuilder();
+            boolean found = false;
+
+            if (existingQuery != null && !existingQuery.isEmpty()) {
+                for (String pair : existingQuery.split("&")) {
+                    String[] parts = pair.split("=", 2);
+                    if (newQuery.length() > 0) newQuery.append("&");
+                    if (parts[0].equals(parameter)) {
+                        newQuery.append(parameter)
+                                .append("=")
+                                .append(payload);
+                        found = true;
+                    } else {
+                        newQuery.append(pair);
+                    }
+                }
+            }
+
+            if (!found) {
+                if (newQuery.length() > 0) newQuery.append("&");
+                newQuery.append(parameter).append("=").append(payload);
+            }
+
+            // Build raw HTTP request string
+            String requestLine;
+            String requestBody = "";
+
+            if (method.equalsIgnoreCase("GET")) {
+                String fullPath = path + "?" + newQuery;
+                requestLine = "GET " + fullPath + " HTTP/1.1";
+            } else {
+                requestLine = "POST " + path + " HTTP/1.1";
+                requestBody = parameter + "=" + payload;
+            }
+
+            // Build complete raw request
+            StringBuilder rawRequest = new StringBuilder();
+            rawRequest.append(requestLine).append("\r\n");
+            rawRequest.append("Host: ").append(host).append("\r\n");
+            rawRequest.append("User-Agent: Mozilla/5.0 ")
+                    .append("(XSS-Sentinel Scanner)\r\n");
+            rawRequest.append("Accept: text/html,application/xhtml+xml\r\n");
+            rawRequest.append("Connection: close\r\n");
 
             if (cookie != null && !cookie.isEmpty()) {
-                request = request.withHeader("Cookie", cookie);
+                rawRequest.append("Cookie: ").append(cookie).append("\r\n");
             }
 
-            HttpRequestResponse response = api.http().sendRequest(request);
-            if (response == null || response.response() == null) return "";
+            if (method.equalsIgnoreCase("POST")) {
+                rawRequest.append("Content-Type: ")
+                        .append("application/x-www-form-urlencoded\r\n");
+                rawRequest.append("Content-Length: ")
+                        .append(requestBody.length()).append("\r\n");
+            }
+
+            rawRequest.append("\r\n");
+
+            if (!requestBody.isEmpty()) {
+                rawRequest.append(requestBody);
+            }
+
+            // Log what we're testing
+            api.logging().logToOutput("Testing ["
+                    + method + "]: " + host + path
+                    + "?" + newQuery);
+
+            // Use Burp's HTTP service with raw request
+            HttpService service = HttpService.httpService(
+                    host, port, isHttps);
+            HttpRequest request = HttpRequest.httpRequest(
+                    service, rawRequest.toString());
+
+            HttpRequestResponse response =
+                    api.http().sendRequest(request);
+
+            if (response == null || response.response() == null) {
+                return "";
+            }
+
             return response.response().bodyToString();
 
         } catch (Exception e) {
-            api.logging().logToError("Request error: " + e.getMessage());
+            api.logging().logToError(
+                    "Request error: " + e.getMessage());
             return "";
         }
-    }
-
-    private String injectIntoUrl(String url, String parameter,
-                                 String payload) {
-        String baseUrl = url.contains("?")
-                ? url.substring(0, url.indexOf("?")) : url;
-        String queryString = url.contains("?")
-                ? url.substring(url.indexOf("?") + 1) : "";
-
-        StringBuilder newQuery = new StringBuilder();
-        boolean found = false;
-
-        if (!queryString.isEmpty()) {
-            for (String pair : queryString.split("&")) {
-                String[] parts = pair.split("=", 2);
-                if (newQuery.length() > 0) newQuery.append("&");
-                if (parts[0].equals(parameter)) {
-                    newQuery.append(parameter).append("=").append(payload);
-                    found = true;
-                } else {
-                    newQuery.append(pair);
-                }
-            }
-        }
-
-        if (!found) {
-            if (newQuery.length() > 0) newQuery.append("&");
-            newQuery.append(parameter).append("=").append(payload);
-        }
-
-        return baseUrl + "?" + newQuery;
     }
 
     private String getQueryString(String url) {
@@ -410,5 +466,9 @@ public class SentinelScanner {
 
     public boolean isScanning() {
         return scanning;
+    }
+
+    public AppCrawler getCrawler() {
+        return crawler;
     }
 }

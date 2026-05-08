@@ -41,24 +41,19 @@ public class XssFuzzer {
                 XssAnalyzer.VulnerabilityType type,
                 String parameter, String url) {
             String urlLower = url.toLowerCase();
-            String paramLower = parameter.toLowerCase();
 
-            // Critical — stored or admin area
+            // Critical — stored XSS or admin area
             if (type == XssAnalyzer.VulnerabilityType.STORED) {
                 return "Critical";
             }
-            if (urlLower.contains("admin") || urlLower.contains("dashboard")) {
+            if (urlLower.contains("admin")
+                    || urlLower.contains("dashboard")
+                    || urlLower.contains("manage")) {
                 return "Critical";
             }
 
-            // High — reflected in sensitive areas
+            // High — reflected XSS
             if (type == XssAnalyzer.VulnerabilityType.REFLECTED) {
-                if (paramLower.contains("user") || paramLower.contains("email")
-                        || paramLower.contains("name")
-                        || urlLower.contains("login")
-                        || urlLower.contains("account")) {
-                    return "High";
-                }
                 return "High";
             }
 
@@ -67,49 +62,65 @@ public class XssFuzzer {
                 return "Medium";
             }
 
-            return "Low";
+            // Default
+            return "High";
         }
 
         private static String generateRemediation(
                 XssAnalyzer.VulnerabilityType type, String parameter) {
             StringBuilder sb = new StringBuilder();
 
-            // Base remediation always applies
-            sb.append("1. ENCODE OUTPUT: Use HTML entity encoding before ");
-            sb.append("rendering '").append(parameter).append("' in the page. ");
-            sb.append("Replace <, >, \", ', & with HTML entities.\n\n");
+            sb.append("REMEDIATION GUIDE FOR PARAMETER: '")
+                    .append(parameter).append("'\n");
+            sb.append("=".repeat(50)).append("\n\n");
 
-            sb.append("2. VALIDATE INPUT: Whitelist allowed characters for '");
-            sb.append(parameter).append("'. ");
-            sb.append("Reject or sanitize unexpected characters.\n\n");
+            sb.append("1. OUTPUT ENCODING\n");
+            sb.append("   Encode all user input before rendering in HTML.\n");
+            sb.append("   Replace special characters with HTML entities:\n");
+            sb.append("   & → &amp;  < → &lt;  > → &gt;\n");
+            sb.append("   \" → &quot;  ' → &#x27;\n\n");
 
-            sb.append("3. USE CSP: Implement Content-Security-Policy header: ");
-            sb.append("Content-Security-Policy: default-src 'self'\n\n");
+            sb.append("2. INPUT VALIDATION\n");
+            sb.append("   Whitelist allowed characters for '")
+                    .append(parameter).append("'.\n");
+            sb.append("   Reject or sanitize unexpected input.\n\n");
 
-            // Type specific remediation
+            sb.append("3. CONTENT SECURITY POLICY\n");
+            sb.append("   Add this header to all responses:\n");
+            sb.append("   Content-Security-Policy: default-src 'self'\n\n");
+
             if (type == XssAnalyzer.VulnerabilityType.REFLECTED) {
-                sb.append("4. REFLECTED XSS FIX: Never reflect user input directly ");
-                sb.append("into HTML. Use server-side encoding libraries like:\n");
-                sb.append("   • Java: OWASP Java Encoder\n");
-                sb.append("   • PHP: htmlspecialchars()\n");
-                sb.append("   • Python: markupsafe.escape()\n");
-                sb.append("   • .NET: HttpUtility.HtmlEncode()\n\n");
-                sb.append("5. SET HttpOnly FLAG on session cookies to prevent ");
-                sb.append("session theft via XSS.");
+                sb.append("4. REFLECTED XSS SPECIFIC FIX\n");
+                sb.append("   Never reflect user input directly into HTML.\n");
+                sb.append("   Use encoding libraries:\n");
+                sb.append("   • Java:   OWASP Java Encoder\n");
+                sb.append("             Encoder.forHtml(input)\n");
+                sb.append("   • PHP:    htmlspecialchars($input, ENT_QUOTES)\n");
+                sb.append("   • Python: markupsafe.escape(input)\n");
+                sb.append("   • .NET:   HttpUtility.HtmlEncode(input)\n\n");
+                sb.append("5. SET HttpOnly AND Secure FLAGS\n");
+                sb.append("   On all session cookies to prevent theft.\n");
             } else if (type == XssAnalyzer.VulnerabilityType.STORED) {
-                sb.append("4. STORED XSS FIX: Sanitize ALL user-supplied data ");
-                sb.append("BEFORE storing in database AND before rendering.\n");
-                sb.append("   Use a sanitization library like DOMPurify.\n\n");
-                sb.append("5. CRITICAL: Audit ALL places where '");
-                sb.append(parameter);
-                sb.append("' value is displayed to other users.");
+                sb.append("4. STORED XSS SPECIFIC FIX\n");
+                sb.append("   Sanitize ALL user data BEFORE storing\n");
+                sb.append("   AND before rendering to other users.\n");
+                sb.append("   Use DOMPurify for HTML sanitization.\n\n");
+                sb.append("5. AUDIT ALL DISPLAY POINTS\n");
+                sb.append("   Check everywhere '").append(parameter)
+                        .append("' is displayed to users.\n");
             } else if (type == XssAnalyzer.VulnerabilityType.DOM_BASED) {
-                sb.append("4. DOM XSS FIX: Avoid using dangerous sinks:\n");
-                sb.append("   • innerHTML, document.write(), eval()\n");
-                sb.append("   • Use textContent or innerText instead\n\n");
-                sb.append("5. SANITIZE: Use DOMPurify before assigning ");
-                sb.append("user data to DOM elements.");
+                sb.append("4. DOM XSS SPECIFIC FIX\n");
+                sb.append("   Avoid dangerous JavaScript sinks:\n");
+                sb.append("   ✗ innerHTML, document.write(), eval()\n");
+                sb.append("   ✓ Use textContent or innerText instead\n\n");
+                sb.append("5. SANITIZE DOM INPUT\n");
+                sb.append("   Use DOMPurify before assigning\n");
+                sb.append("   user data to any DOM element.\n");
             }
+
+            sb.append("\n6. REFERENCES\n");
+            sb.append("   • OWASP XSS Prevention Cheat Sheet\n");
+            sb.append("   • https://cheatsheetseries.owasp.org\n");
 
             return sb.toString();
         }
@@ -118,8 +129,10 @@ public class XssFuzzer {
             String urlLower = url.toLowerCase();
             String paramLower = parameter.toLowerCase();
 
-            if (urlLower.contains("search") || paramLower.contains("search")
-                    || paramLower.contains("query") || paramLower.equals("q")) {
+            if (urlLower.contains("search")
+                    || paramLower.contains("search")
+                    || paramLower.contains("query")
+                    || paramLower.equals("q")) {
                 return "Search Bar";
             } else if (urlLower.contains("login")
                     || paramLower.contains("user")
@@ -164,7 +177,8 @@ public class XssFuzzer {
 
         public String toString() {
             return "[" + severity + "] " + location
-                    + " | " + url + " | Param: " + parameter
+                    + " | " + url
+                    + " | Param: " + parameter
                     + " | Payload: " + payload;
         }
     }
@@ -176,6 +190,11 @@ public class XssFuzzer {
 
     public XssFuzzer() {
         this.payloadManager = new PayloadManager();
+        this.analyzer = new XssAnalyzer();
+    }
+
+    public XssFuzzer(PayloadManager payloadManager) {
+        this.payloadManager = payloadManager;
         this.analyzer = new XssAnalyzer();
     }
 
