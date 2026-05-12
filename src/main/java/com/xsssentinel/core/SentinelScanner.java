@@ -1,6 +1,5 @@
 package com.xsssentinel.core;
 
-import com.xsssentinel.payloads.PayloadManager;
 import com.xsssentinel.crawler.AppCrawler;
 import com.xsssentinel.fuzzer.XssFuzzer;
 import com.xsssentinel.ui.SentinelPanel;
@@ -28,11 +27,23 @@ public class SentinelScanner {
     private final SentinelPanel panel;
     private boolean scanning = false;
 
-    private static final int MAX_PAGES = 20;
+    private static final int MAX_PAGES = 10;
     private static final int TIMEOUT = 10000;
 
+    // Single strong polyglot payload for quick test
+    private static final String QUICK_TEST_PAYLOAD =
+            "<script>alert('XSS-Sentinel')</script>";
+    private static final String QUICK_TEST_PAYLOAD_2 =
+            "\"><script>alert('XSS-Sentinel')</script>";
+    private static final String QUICK_TEST_PAYLOAD_3 =
+            "<img src=x onerror=alert('XSS-Sentinel')>";
+    private static final String QUICK_TEST_PAYLOAD_4 =
+            "'><svg onload=alert('XSS-Sentinel')>";
+    private static final String QUICK_TEST_PAYLOAD_5 =
+            "javascript:alert('XSS-Sentinel')";
+
     public SentinelScanner(MontoyaApi api, SentinelPanel panel,
-                           PayloadManager payloadManager) {
+                           com.xsssentinel.payloads.PayloadManager payloadManager) {
         this.api = api;
         this.panel = panel;
         this.crawler = new AppCrawler();
@@ -55,6 +66,98 @@ public class SentinelScanner {
         }
     }
 
+    // Quick Test — tests URL parameters directly with fast payloads
+    public void quickTest(String targetUrl) {
+        if (scanning) {
+            panel.setStatus("Scan already in progress...");
+            return;
+        }
+
+        scanning = true;
+        panel.setStatus("Quick Test started on: " + shortenUrl(targetUrl));
+
+        new Thread(() -> {
+            try {
+                // Extract parameters directly from URL
+                String queryString = getQueryString(targetUrl);
+
+                if (queryString.isEmpty()) {
+                    panel.setStatus("No parameters found in URL — "
+                            + "try Quick Scan to crawl the site");
+                    scanning = false;
+                    return;
+                }
+
+                // Parse parameters
+                List<String> parameters = new ArrayList<>();
+                String[] pairs = queryString.split("&");
+                for (String pair : pairs) {
+                    String[] parts = pair.split("=", 2);
+                    if (parts.length >= 1 && !parts[0].isEmpty()) {
+                        parameters.add(parts[0]);
+                    }
+                }
+
+                api.logging().logToOutput("Quick Test - Found "
+                        + parameters.size() + " parameters in URL");
+                panel.setStatus("Testing " + parameters.size()
+                        + " parameters with quick payloads...");
+
+                // Test each parameter with quick payloads
+                List<String> quickPayloads = new ArrayList<>();
+                quickPayloads.add(QUICK_TEST_PAYLOAD);
+                quickPayloads.add(QUICK_TEST_PAYLOAD_2);
+                quickPayloads.add(QUICK_TEST_PAYLOAD_3);
+                quickPayloads.add(QUICK_TEST_PAYLOAD_4);
+                quickPayloads.add(QUICK_TEST_PAYLOAD_5);
+
+                int found = 0;
+                for (String parameter : parameters) {
+                    for (String payload : quickPayloads) {
+                        String response = sendRequest(
+                                targetUrl, parameter, payload, "GET", "");
+
+                        if (response == null || response.isEmpty()) continue;
+
+                        com.xsssentinel.analyzer.XssAnalyzer analyzer =
+                                new com.xsssentinel.analyzer.XssAnalyzer();
+                        com.xsssentinel.analyzer.XssAnalyzer.AnalysisResult result =
+                                analyzer.analyze(response, payload, parameter);
+
+                        if (result.isVulnerable()) {
+                            XssFuzzer.FuzzResult fuzzResult =
+                                    new XssFuzzer.FuzzResult(
+                                            targetUrl, parameter, payload,
+                                            result.getEvidence(),
+                                            result.getType(), true);
+                            panel.addResult(fuzzResult);
+                            found++;
+                            api.logging().logToOutput(
+                                    "Quick Test FOUND: " + parameter
+                                            + " with payload: " + payload);
+                            break; // Move to next parameter
+                        }
+                    }
+                }
+
+                if (found == 0) {
+                    panel.setStatus("Quick Test complete - No XSS found. "
+                            + "Try Quick Scan for deeper testing.");
+                } else {
+                    panel.setStatus("Quick Test complete - Found "
+                            + found + " vulnerabilities!");
+                }
+
+            } catch (Exception e) {
+                api.logging().logToError(
+                        "Quick Test error: " + e.getMessage());
+                panel.setStatus("Quick Test error - " + e.getMessage());
+            } finally {
+                scanning = false;
+            }
+        }).start();
+    }
+
     public void crawlAndScan(String targetUrl,
                              SentinelPanel.LoginCredentials creds) {
         if (scanning) {
@@ -67,27 +170,35 @@ public class SentinelScanner {
 
         new Thread(() -> {
             try {
-                // Step 1 — Login if credentials provided
                 String sessionCookie = "";
                 if (creds.hasCredentials()) {
                     panel.setStatus("Logging in to: " + creds.loginUrl);
                     sessionCookie = performLogin(creds);
                     if (sessionCookie.isEmpty()) {
-                        panel.setStatus("Login failed — check credentials");
+                        panel.setStatus("Login failed - check credentials");
                         scanning = false;
                         return;
                     }
                     api.logging().logToOutput("Login successful");
-                    panel.setStatus("Login successful — starting crawl...");
+                    panel.setStatus("Login successful - starting crawl...");
                 }
 
-                // Step 2 — Crawl
                 panel.setStatus("Starting crawl of: " + targetUrl);
                 Set<String> visited = new HashSet<>();
                 List<String> queue = new ArrayList<>();
                 queue.add(targetUrl);
                 String baseDomain = getBaseDomain(targetUrl);
                 int pageCount = 0;
+
+                // Also test URL parameters directly if present
+                String directQuery = getQueryString(targetUrl);
+                if (!directQuery.isEmpty()) {
+                    crawler.processRequest(targetUrl, "GET",
+                            directQuery, "", "");
+                    panel.incrementScanned();
+                    api.logging().logToOutput(
+                            "Added direct URL params: " + directQuery);
+                }
 
                 while (!queue.isEmpty() && pageCount < MAX_PAGES) {
                     String currentUrl = queue.remove(0);
@@ -119,14 +230,13 @@ public class SentinelScanner {
                     }
                 }
 
-                // Step 3 — Fuzz
                 List<AppCrawler.CrawledInput> inputs =
                         crawler.getDiscoveredInputs();
                 api.logging().logToOutput("Discovered "
                         + inputs.size() + " inputs");
 
                 if (inputs.isEmpty()) {
-                    panel.setStatus("No inputs found — "
+                    panel.setStatus("No inputs found - "
                             + "try browsing manually through Burp proxy");
                     scanning = false;
                     return;
@@ -138,8 +248,6 @@ public class SentinelScanner {
                 String cookie = sessionCookie;
 
                 for (AppCrawler.CrawledInput input : inputs) {
-
-                    // Check if paused
                     while (panel.isPaused()) {
                         try {
                             Thread.sleep(500);
@@ -151,7 +259,7 @@ public class SentinelScanner {
 
                     count++;
                     panel.setStatus("Testing " + count + "/"
-                            + inputs.size() + " — "
+                            + inputs.size() + " - "
                             + input.getParameter()
                             + " @ " + shortenUrl(input.getUrl()));
 
@@ -172,7 +280,7 @@ public class SentinelScanner {
 
             } catch (Exception e) {
                 api.logging().logToError("Scan error: " + e.getMessage());
-                panel.setStatus("Scan error — " + e.getMessage());
+                panel.setStatus("Scan error - " + e.getMessage());
             } finally {
                 scanning = false;
             }
@@ -333,7 +441,6 @@ public class SentinelScanner {
                                String payload, String method,
                                String cookie) {
         try {
-            // Parse URL components
             URL parsedUrl = new URL(url);
             String host = parsedUrl.getHost();
             int port = parsedUrl.getPort();
@@ -344,11 +451,9 @@ public class SentinelScanner {
                 port = isHttps ? 443 : 80;
             }
 
-            // Build raw path with injected payload
             String path = parsedUrl.getPath();
             if (path == null || path.isEmpty()) path = "/";
 
-            // Build query string with raw payload
             String existingQuery = parsedUrl.getQuery();
             StringBuilder newQuery = new StringBuilder();
             boolean found = false;
@@ -373,7 +478,6 @@ public class SentinelScanner {
                 newQuery.append(parameter).append("=").append(payload);
             }
 
-            // Build raw HTTP request string
             String requestLine;
             String requestBody = "";
 
@@ -385,7 +489,6 @@ public class SentinelScanner {
                 requestBody = parameter + "=" + payload;
             }
 
-            // Build complete raw request
             StringBuilder rawRequest = new StringBuilder();
             rawRequest.append(requestLine).append("\r\n");
             rawRequest.append("Host: ").append(host).append("\r\n");
@@ -411,12 +514,10 @@ public class SentinelScanner {
                 rawRequest.append(requestBody);
             }
 
-            // Log what we're testing
             api.logging().logToOutput("Testing ["
                     + method + "]: " + host + path
                     + "?" + newQuery);
 
-            // Use Burp's HTTP service with raw request
             HttpService service = HttpService.httpService(
                     host, port, isHttps);
             HttpRequest request = HttpRequest.httpRequest(
@@ -461,7 +562,7 @@ public class SentinelScanner {
 
     public void clearData() {
         crawler.clear();
-        panel.setStatus("Data cleared — Ready");
+        panel.setStatus("Data cleared - Ready");
     }
 
     public boolean isScanning() {

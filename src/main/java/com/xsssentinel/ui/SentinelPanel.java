@@ -33,6 +33,7 @@ public class SentinelPanel {
     private int totalScanned = 0;
     private int totalVulnerable = 0;
     private BiConsumer<String, LoginCredentials> crawlCallback;
+    private Runnable quickTestCallback;
     private MontoyaApi api;
     private volatile boolean paused = false;
     private Runnable pauseCallback;
@@ -84,6 +85,14 @@ public class SentinelPanel {
         this.resumeCallback = callback;
     }
 
+    public void setQuickTestCallback(Runnable callback) {
+        this.quickTestCallback = callback;
+    }
+
+    public String getTargetUrl() {
+        return urlField.getText().trim();
+    }
+
     public SentinelPanel() {
         mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBackground(Color.WHITE);
@@ -91,7 +100,8 @@ public class SentinelPanel {
         // ── Header ──────────────────────────────────────────
         JPanel headerPanel = new JPanel(new BorderLayout());
         headerPanel.setBackground(new Color(35, 35, 35));
-        headerPanel.setBorder(BorderFactory.createEmptyBorder(10, 15, 10, 15));
+        headerPanel.setBorder(BorderFactory.createEmptyBorder(
+                10, 15, 10, 15));
 
         JLabel titleLabel = new JLabel(
                 "XSS-Sentinel - Intelligent XSS Scanner");
@@ -120,6 +130,17 @@ public class SentinelPanel {
         JPanel buttonRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttonRow.setBackground(new Color(50, 50, 50));
 
+        // Quick Test button — NEW
+        JButton quickTestButton = new JButton("Quick Test");
+        quickTestButton.setFont(new Font("SansSerif", Font.BOLD, 12));
+        quickTestButton.setBackground(new Color(0, 180, 180));
+        quickTestButton.setForeground(Color.WHITE);
+        quickTestButton.setOpaque(true);
+        quickTestButton.setBorderPainted(false);
+        quickTestButton.setPreferredSize(new Dimension(110, 28));
+        quickTestButton.setToolTipText(
+                "Instantly test URL parameters - paste URL with params");
+
         JButton quickScanButton = new JButton("Quick Scan");
         quickScanButton.setFont(new Font("SansSerif", Font.BOLD, 12));
         quickScanButton.setBackground(new Color(0, 153, 76));
@@ -128,7 +149,7 @@ public class SentinelPanel {
         quickScanButton.setBorderPainted(false);
         quickScanButton.setPreferredSize(new Dimension(110, 28));
         quickScanButton.setToolTipText(
-                "Scan without login — for public apps");
+                "Crawl and scan entire application");
 
         JButton authScanButton = new JButton("Auth Scan");
         authScanButton.setFont(new Font("SansSerif", Font.BOLD, 12));
@@ -148,6 +169,7 @@ public class SentinelPanel {
         pauseButton.setPreferredSize(new Dimension(80, 28));
         pauseButton.setToolTipText("Pause or Resume the scan");
 
+        buttonRow.add(quickTestButton);
         buttonRow.add(quickScanButton);
         buttonRow.add(authScanButton);
         buttonRow.add(pauseButton);
@@ -155,6 +177,19 @@ public class SentinelPanel {
         urlRow.add(urlLabel, BorderLayout.WEST);
         urlRow.add(urlField, BorderLayout.CENTER);
         urlRow.add(buttonRow, BorderLayout.EAST);
+
+        // ── Info Row ─────────────────────────────────────────
+        JPanel infoRow = new JPanel(new BorderLayout());
+        infoRow.setBackground(new Color(30, 30, 30));
+        infoRow.setBorder(BorderFactory.createEmptyBorder(3, 15, 3, 15));
+
+        JLabel infoLabel = new JLabel(
+                "Quick Test: paste URL with params (e.g. http://site.com/search?q=test) "
+                        + "| Quick Scan: crawl entire site "
+                        + "| Auth Scan: scan with login");
+        infoLabel.setForeground(new Color(150, 150, 150));
+        infoLabel.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        infoRow.add(infoLabel, BorderLayout.WEST);
 
         // ── Auth Panel ───────────────────────────────────────
         authPanel = new JPanel(new GridBagLayout());
@@ -203,6 +238,33 @@ public class SentinelPanel {
         authPanel.add(authNote, gbc);
 
         // ── Button Actions ────────────────────────────────────
+
+        // Quick Test action
+        quickTestButton.addActionListener(e -> {
+            String url = urlField.getText().trim();
+            if (!validateUrl(url)) return;
+            if (!url.contains("?")) {
+                JOptionPane.showMessageDialog(mainPanel,
+                        "<html><b>No parameters found in URL!</b><br><br>"
+                                + "Quick Test needs a URL with parameters.<br>"
+                                + "Example: http://site.com/search<b>?q=test</b><br><br>"
+                                + "For sites without parameters, use <b>Quick Scan</b> instead.</html>",
+                        "No Parameters Found",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            authPanel.setVisible(false);
+            paused = false;
+            pauseButton.setText("Pause");
+            pauseButton.setBackground(new Color(150, 100, 0));
+            mainPanel.revalidate();
+            resultData.clear();
+            if (quickTestCallback != null) {
+                quickTestCallback.run();
+            }
+        });
+
+        // Quick Scan action
         quickScanButton.addActionListener(e -> {
             String url = urlField.getText().trim();
             if (!validateUrl(url)) return;
@@ -218,6 +280,7 @@ public class SentinelPanel {
             }
         });
 
+        // Auth Scan action
         authScanButton.addActionListener(e -> {
             String url = urlField.getText().trim();
             if (!validateUrl(url)) return;
@@ -250,6 +313,7 @@ public class SentinelPanel {
             }
         });
 
+        // Pause action
         pauseButton.addActionListener(e -> {
             if (pauseButton.getText().equals("Pause")) {
                 paused = true;
@@ -268,7 +332,11 @@ public class SentinelPanel {
         JPanel topPanel = new JPanel(new BorderLayout());
         topPanel.add(headerPanel, BorderLayout.NORTH);
         topPanel.add(urlRow, BorderLayout.CENTER);
-        topPanel.add(authPanel, BorderLayout.SOUTH);
+
+        JPanel subTopPanel = new JPanel(new BorderLayout());
+        subTopPanel.add(infoRow, BorderLayout.NORTH);
+        subTopPanel.add(authPanel, BorderLayout.SOUTH);
+        topPanel.add(subTopPanel, BorderLayout.SOUTH);
 
         // ── Results Table ────────────────────────────────────
         String[] columns = {
@@ -291,7 +359,6 @@ public class SentinelPanel {
         resultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         resultsTable.setGridColor(new Color(220, 220, 220));
 
-        // Column widths
         resultsTable.getColumnModel().getColumn(0).setPreferredWidth(30);
         resultsTable.getColumnModel().getColumn(1).setPreferredWidth(110);
         resultsTable.getColumnModel().getColumn(2).setPreferredWidth(200);
@@ -300,7 +367,7 @@ public class SentinelPanel {
         resultsTable.getColumnModel().getColumn(5).setPreferredWidth(70);
         resultsTable.getColumnModel().getColumn(6).setPreferredWidth(280);
 
-        // XSS Type column renderer
+        // XSS Type renderer
         resultsTable.getColumnModel().getColumn(4)
                 .setCellRenderer((table, value, isSelected,
                                   hasFocus, row, column) -> {
@@ -331,7 +398,7 @@ public class SentinelPanel {
                     return label;
                 });
 
-        // Severity column renderer
+        // Severity renderer
         resultsTable.getColumnModel().getColumn(5)
                 .setCellRenderer((table, value, isSelected,
                                   hasFocus, row, column) -> {
@@ -362,7 +429,7 @@ public class SentinelPanel {
                     return label;
                 });
 
-        // Actions column renderer
+        // Actions renderer
         resultsTable.getColumnModel().getColumn(6)
                 .setCellRenderer(new ActionButtonRenderer());
 
@@ -405,7 +472,8 @@ public class SentinelPanel {
                 BorderFactory.createEmptyBorder(5, 15, 5, 15));
 
         statusLabel = new JLabel(
-                "Ready - Enter URL and choose Quick Scan or Auth Scan");
+                "Ready - Paste URL with params for Quick Test, "
+                        + "or use Quick Scan to crawl");
         statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
         statusLabel.setForeground(new Color(100, 100, 100));
 
@@ -422,7 +490,6 @@ public class SentinelPanel {
         mainPanel.add(statusPanel, BorderLayout.SOUTH);
     }
 
-    // ── Action Button Renderer ────────────────────────────────
     private static class ActionButtonRenderer
             implements TableCellRenderer {
         public Component getTableCellRendererComponent(
@@ -548,7 +615,8 @@ public class SentinelPanel {
         textArea.setLineWrap(true);
         textArea.setWrapStyleWord(true);
         textArea.setBackground(new Color(245, 245, 245));
-        textArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        textArea.setBorder(BorderFactory.createEmptyBorder(
+                10, 10, 10, 10));
 
         JScrollPane scroll = new JScrollPane(textArea);
         scroll.setPreferredSize(new Dimension(580, 400));
