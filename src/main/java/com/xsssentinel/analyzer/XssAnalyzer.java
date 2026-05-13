@@ -1,5 +1,6 @@
 package com.xsssentinel.analyzer;
 
+import com.xsssentinel.payloads.PayloadManager;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -52,98 +53,77 @@ public class XssAnalyzer {
                     VulnerabilityType.UNKNOWN);
         }
 
-        String responseLower = responseBody.toLowerCase();
+        // Step 1 — Check if our unique marker is reflected
+        // This is the ONLY reliable confirmation of XSS
+        if (responseBody.contains(PayloadManager.MARKER)) {
 
-        // Check 1 — XSS-Sentinel marker reflected
-        if (responseBody.contains("XSS-Sentinel")) {
-            String evidence = extractEvidence(
-                    responseBody, "XSS-Sentinel");
-            VulnerabilityType type = determineType(payload);
-            return new AnalysisResult(true, payload,
-                    evidence, parameter, type);
-        }
+            // Step 2 — Verify it's actually unescaped HTML
+            // Not just the word reflected but actual dangerous tags
+            boolean hasUnescapedTag = false;
+            String evidence = "";
 
-        // Check 2 — Raw payload reflected
-        if (responseBody.contains(payload)) {
-            String evidence = extractEvidence(responseBody, payload);
-            VulnerabilityType type = determineType(payload);
-            return new AnalysisResult(true, payload,
-                    evidence, parameter, type);
-        }
+            // Check for unescaped script tag
+            if (responseBody.contains("<script")
+                    && responseBody.contains(PayloadManager.MARKER)) {
+                hasUnescapedTag = true;
+                evidence = extractEvidence(responseBody, "<script");
+            }
 
-        // Check 3 — Decoded payload reflected
-        String decoded = decodePayload(payload);
-        if (!decoded.equals(payload) && responseBody.contains(decoded)) {
-            String evidence = extractEvidence(responseBody, decoded);
-            VulnerabilityType type = determineType(payload);
-            return new AnalysisResult(true, payload,
-                    evidence, parameter, type);
-        }
+            // Check for unescaped img tag with onerror
+            if (!hasUnescapedTag
+                    && responseBody.contains("<img")
+                    && responseBody.contains("onerror")
+                    && responseBody.contains(PayloadManager.MARKER)) {
+                hasUnescapedTag = true;
+                evidence = extractEvidence(responseBody, "onerror");
+            }
 
-        // Check 4 — Dangerous tags reflected
-        List<String> dangerousTags = new ArrayList<>();
-        dangerousTags.add("<script");
-        dangerousTags.add("onerror=");
-        dangerousTags.add("onload=");
-        dangerousTags.add("onclick=");
-        dangerousTags.add("onfocus=");
-        dangerousTags.add("onmouseover=");
-        dangerousTags.add("<svg");
-        dangerousTags.add("<img");
-        dangerousTags.add("<iframe");
-        dangerousTags.add("javascript:");
-        dangerousTags.add("alert(");
-        dangerousTags.add("alert`");
+            // Check for unescaped svg tag
+            if (!hasUnescapedTag
+                    && responseBody.contains("<svg")
+                    && responseBody.contains(PayloadManager.MARKER)) {
+                hasUnescapedTag = true;
+                evidence = extractEvidence(responseBody, "<svg");
+            }
 
-        // Only flag if payload contains the tag AND response contains it
-        for (String tag : dangerousTags) {
-            if (payload.toLowerCase().contains(tag.toLowerCase())
-                    && responseLower.contains(tag.toLowerCase())) {
-                String evidence = extractEvidence(responseBody, tag);
+            // Check for unescaped event handler
+            if (!hasUnescapedTag
+                    && (responseBody.contains("onload=")
+                    || responseBody.contains("onfocus=")
+                    || responseBody.contains("ontoggle="))
+                    && responseBody.contains(PayloadManager.MARKER)) {
+                hasUnescapedTag = true;
+                evidence = extractEvidence(responseBody,
+                        PayloadManager.MARKER);
+            }
+
+            // Check for unescaped details/input/select tags
+            if (!hasUnescapedTag
+                    && (responseBody.contains("<details")
+                    || responseBody.contains("<input")
+                    || responseBody.contains("<select"))
+                    && responseBody.contains(PayloadManager.MARKER)) {
+                hasUnescapedTag = true;
+                evidence = extractEvidence(responseBody,
+                        PayloadManager.MARKER);
+            }
+
+            if (hasUnescapedTag) {
                 VulnerabilityType type = determineType(payload);
                 return new AnalysisResult(true, payload,
                         evidence, parameter, type);
             }
         }
 
-        // Check 5 — Parameter value reflected unsanitized
-        // If response contains key parts of payload unencoded
-        if (payload.contains("<") && responseLower.contains("<script")) {
-            String evidence = extractEvidence(responseBody, "<script");
-            return new AnalysisResult(true, payload,
-                    evidence, parameter, VulnerabilityType.REFLECTED);
-        }
-
-        if (payload.contains("onerror") && responseLower.contains("onerror")) {
-            String evidence = extractEvidence(responseBody, "onerror");
-            return new AnalysisResult(true, payload,
-                    evidence, parameter, VulnerabilityType.REFLECTED);
-        }
-
+        // Not vulnerable
         return new AnalysisResult(false, payload,
-                "No reflection detected", parameter,
+                "No XSS reflection detected", parameter,
                 VulnerabilityType.UNKNOWN);
-    }
-
-    private String decodePayload(String payload) {
-        return payload
-                .replace("%3C", "<")
-                .replace("%3E", ">")
-                .replace("%22", "\"")
-                .replace("%27", "'")
-                .replace("%2F", "/")
-                .replace("%3c", "<")
-                .replace("%3e", ">")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&#x27;", "'");
     }
 
     private VulnerabilityType determineType(String payload) {
         String p = payload.toLowerCase();
-        if (p.startsWith("javascript:")
-                || p.startsWith("#")
+        if (p.startsWith("#")
                 || p.contains("document.")
                 || p.contains("innerhtml")
                 || p.contains("window.")) {
@@ -155,7 +135,8 @@ public class XssAnalyzer {
                 || p.contains("<iframe")
                 || p.contains("onerror")
                 || p.contains("onload")
-                || p.contains("alert(")) {
+                || p.contains("onfocus")
+                || p.contains("ontoggle")) {
             return VulnerabilityType.REFLECTED;
         }
         return VulnerabilityType.REFLECTED;
@@ -174,13 +155,16 @@ public class XssAnalyzer {
     public List<String> getSuggestedPayloads(String responseBody) {
         List<String> suggested = new ArrayList<>();
         if (responseBody.contains("<input")) {
-            suggested.add("<img src=x onerror=alert('XSS-Sentinel')>");
+            suggested.add("<img src=x onerror=alert('"
+                    + PayloadManager.MARKER + "')>");
         }
         if (responseBody.contains("value=")) {
-            suggested.add("'\"><script>alert('XSS-Sentinel')</script>");
+            suggested.add("'\"><script>alert('"
+                    + PayloadManager.MARKER + "')</script>");
         }
         if (responseBody.contains("href=")) {
-            suggested.add("javascript:alert('XSS-Sentinel')");
+            suggested.add("#<img src=x onerror=alert('"
+                    + PayloadManager.MARKER + "')>");
         }
         return suggested;
     }

